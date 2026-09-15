@@ -5,9 +5,9 @@ IAPWS-IF97-based coolant density calculation module.
 
 Companion code for:
   Kim, D. "Screening-Level Pin-Cell Neutronic Sensitivity of a NuScale
-  US600-Like SMR Fuel Lattice to Coolant-Density Perturbations from
-  Simplified Primary-System Degradation Models." Journal of Nuclear
-  Engineering (submitted).
+  Power Module-Like SMR Fuel Lattice to Coolant-State Perturbations from
+  Primary-System Degradation." Kerntechnik, manuscript KERN-2026-0074
+  (under revision).
 
 Purpose
 -------
@@ -40,14 +40,29 @@ cp varies by about 20 % over the core temperature rise, so all energy
 balances use IF97 enthalpy differences instead (see loop_balance.py and
 NominalConditions in degradation_scenarios.py).
 
-This implementation is verified against NIST WebBook reference data at
-three temperatures spanning the NuScale US600-like operating range
-(manuscript Table 1, ref. [17]); maximum deviation in both rho and cp
-is less than 0.002%. See also tests/test_if97_regression.py, which pins
-the property routine to the three official IAPWS R7-97 Region 1
-verification points.
+Verification strategy (manuscript Section 2.3 / Section 3.1 / response M1)
+----------------------------------------------------------------------------
+The submitted version claimed agreement with the NIST Chemistry WebBook to
+better than 0.001% in density and 0.002% in specific heat. That claim is
+withdrawn: the NIST WebBook serves IAPWS-95 (Wagner and Pruss 2002), not
+IAPWS-IF97, and the two formulations differ by about 9.6e-4% in density but
+about 0.099% in cp in this region -- so the density agreement was of the
+right order, but no conforming IF97 implementation could meet the quoted
+cp criterion against an IAPWS-95 reference.
 
-Design basis: NuScale US600-like configuration, 160 MWt / 50 MWe
+This implementation is instead verified two ways, both against the primary
+IAPWS references rather than a second, differently-formulated equation of
+state:
+  1. tests/test_if97_regression.py pins the property routine to the three
+     official IAPWS R7-97 Region 1 verification points (300 K/3 MPa,
+     300 K/80 MPa, 500 K/3 MPa); the largest relative deviation over all
+     published Region 1 quantities is 2.8e-9 (supplementary item S1).
+  2. Every coolant state actually passed to OpenMC across the sweep is
+     independently recomputed from its tabulated (T, P) using a separate
+     IF97 implementation (supplementary item S3); the largest deviation
+     over the sixty-three unborated states is 1.8e-5%.
+
+Design basis: NuScale Power Module-like configuration, 160 MWt / 50 MWe
 
 References:
   [1] IAPWS-IF97, Revised Release 2007, www.iapws.org (manuscript ref. [12])
@@ -88,7 +103,7 @@ from degradation_scenarios import (
 # ---------------------------------------------------------------
 class PhysicsLimits:
     """
-    NuScale US600-like operating / modeling limits used for diagnostic
+    NuScale Power Module-like operating / modeling limits used for diagnostic
     classification of computed coolant states.
 
     IMPORTANT: T_OUTLET_CEILING_C (320.0 degC) is a conservative internal
@@ -476,7 +491,7 @@ if __name__ == '__main__':
 
     # -- 1. Nominal-condition verification ------------------------
     print("=" * 68)
-    print("IAPWS-IF97 nominal-condition verification (NuScale US600-like, 160 MWt/50 MWe)")
+    print("IAPWS-IF97 nominal-condition verification (NuScale Power Module-like, 160 MWt/50 MWe)")
     print("=" * 68)
     nominal = compute_properties(nc.T_CORE_AVG_C, nc.P_MPa, scenario_name='NOMINAL')
     print(nominal.summary())

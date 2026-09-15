@@ -5,9 +5,9 @@ Reproduces all manuscript figures from the CSV result files.
 
 Companion code for:
   Kim, D. "Screening-Level Pin-Cell Neutronic Sensitivity of a NuScale
-  US600-Like SMR Fuel Lattice to Coolant-Density Perturbations from
-  Simplified Primary-System Degradation Models." Journal of Nuclear
-  Engineering (submitted).
+  Power Module-Like SMR Fuel Lattice to Coolant-State Perturbations from
+  Primary-System Degradation." Kerntechnik, manuscript KERN-2026-0074
+  (under revision).
 
 Usage
 -----

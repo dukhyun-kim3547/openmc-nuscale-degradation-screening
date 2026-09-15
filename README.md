@@ -1,18 +1,18 @@
 # OpenMC NuScale Degradation Screening
 
-Screening-level OpenMC pin-cell neutronic sensitivity analysis of a NuScale US600-like SMR fuel lattice to coolant-density perturbations from simplified primary-system degradation models.
+Screening-level OpenMC pin-cell neutronic sensitivity analysis of a NuScale Power Module-like SMR fuel lattice to coolant-state perturbations from primary-system degradation.
 
 ## Overview
 
 This repository contains the simulation code, raw results, and figure-generation scripts supporting the manuscript:
 
-> Kim, D. *Screening-Level Pin-Cell Neutronic Sensitivity of a NuScale US600-Like SMR Fuel Lattice to Coolant-Density Perturbations from Simplified Primary-System Degradation Models.* Kerntechnik, manuscript KERN-2026-0074 (submitted 2026-07-27; under revision).
+> Kim, D. *Screening-Level Pin-Cell Neutronic Sensitivity of a NuScale Power Module-Like SMR Fuel Lattice to Coolant-State Perturbations from Primary-System Degradation.* Kerntechnik, manuscript KERN-2026-0074 (submitted 2026-07-27; under revision).
 
 Three simplified primary-system degradation scenarios are modeled:
 
 - **SG helical-coil fouling** -- linear fouling thermal resistance
 - **Core barrel bypass leakage** -- linear bypass fraction
-- **Hot riser tube corrosion** -- parabolic oxide growth (negative-control case)
+- **Hot riser tube corrosion** -- assumed monotone oxide growth, no kinetic content (negative-control case)
 
 Each scenario is parameterized by a normalized degradation level η ∈ [0, 1] across 21 discrete levels. Coolant densities are computed via the IAPWS-IF97 thermodynamic formulation and passed to OpenMC pin-cell eigenvalue calculations using ENDF/B-VIII.0 nuclear data.
 
@@ -105,6 +105,8 @@ python checks/fit_coefficient.py
 
 Each eigenvalue calculation uses 500,000 particles per batch with 110 total batches, of which 10 are inactive. The batch-statistics uncertainty on the eigenvalue is 12.61 pcm; a difference of two independent calculations therefore carries sqrt(2) sigma, which is 17.84 pcm expressed in delta-k and 9.00 pcm expressed in reactivity.
 
+The riser degradation law (`RiserCorrosionModel.compute`) varies only the oxide-driven flow-area reduction; deposit surface roughness is deliberately not folded into it. Running `python degradation_models/degradation_scenarios.py` also prints a standalone roughness sensitivity check (reviewer point M9): adding a representative +3 um deposit roughness (or an extreme +50 um case) on top of the maximum oxide thickness changes the whole-loop coolant density by at most 0.0011%, equivalent to at most 0.12 pcm in reactivity through the fitted coefficient -- three orders of magnitude below the 9.00 pcm differencing uncertainty above -- so it is reported separately rather than mixed into the swept degradation level.
+
 ## Property verification
 
 The IAPWS-IF97 implementation is pinned to the three official Region 1 verification points of IAPWS R7-97, Table 5: (300 K, 3 MPa), (300 K, 80 MPa) and (500 K, 3 MPa), for specific volume, internal energy, enthalpy, entropy, isobaric heat capacity and speed of sound, together with domain assertions that every swept state lies in Region 1 and is subcooled.
@@ -116,7 +118,7 @@ python tests/test_if97_regression.py -v       # full property listing
 
 ## Scope and limitations
 
-This analysis is a screening-level study using a two-dimensional reflective pin-cell model with infinite-lattice boundary conditions. It does not represent the full NuScale US600 core geometry and excludes neutron leakage, axial power shaping, control rod worth, burnup effects, and crud deposition on the cladding surface. Results should be interpreted as pin-cell-level sensitivity estimates, not plant-level safety or licensing conclusions.
+This analysis is a screening-level study using a two-dimensional reflective pin-cell model with infinite-lattice boundary conditions. It does not represent the full NuScale Power Module core geometry and excludes neutron leakage, axial power shaping, control rod worth, burnup effects, and crud deposition on the cladding surface. Results should be interpreted as pin-cell-level sensitivity estimates, not plant-level safety or licensing conclusions.
 
 The headline coefficient is fitted on an unborated lattice. A borated comparison at the beginning-of-cycle concentration is reported in the revision and is carried as a correction factor rather than as the representative value. See the manuscript for full details.
 

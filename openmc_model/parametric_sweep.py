@@ -1,25 +1,25 @@
 """
 parametric_sweep.py
 ===================
-OpenMC parametric sweep driver for the NuScale US600-like SMR
+OpenMC parametric sweep driver for the NuScale Power Module-like SMR
 degradation neutronics screening study.
 
 Companion code for:
   Kim, D. "Screening-Level Pin-Cell Neutronic Sensitivity of a NuScale
-  US600-Like SMR Fuel Lattice to Coolant-Density Perturbations from
-  Simplified Primary-System Degradation Models." Journal of Nuclear
-  Engineering (submitted).
+  Power Module-Like SMR Fuel Lattice to Coolant-State Perturbations from
+  Primary-System Degradation." Kerntechnik, manuscript KERN-2026-0074
+  (under revision).
 
 Scope and limitations
 ----------------------
 This script drives a two-dimensional (2D) infinite reflective pin-cell
 OpenMC eigenvalue calculation. It does NOT represent the full NuScale
-US600 core geometry. The computed eigenvalue is a lattice-level
+Power Module core geometry. The computed eigenvalue is a lattice-level
 multiplication factor (k-infinity), not a full-core effective
 multiplication factor. See manuscript Section 2.5 for the full scope
 and limitations discussion.
 
-NuScale US600-like pin-cell specification (manuscript Section 2.4)
+NuScale Power Module-like pin-cell specification (manuscript Section 2.4)
 ------------------------------------------------------------------
   2D infinite lattice (XY reflective, infinite in Z)
   Fuel pellet radius   : 0.4095 cm   (UO2, 4.95 wt% U235)
@@ -49,7 +49,7 @@ Usage
   # High-statistics run as used in the manuscript
   python parametric_sweep.py --all-scenarios --particles 500000 --batches 200 --inactive 100
 
-Design basis: NuScale US600-like configuration, 160 MWt / 50 MWe
+Design basis: NuScale Power Module-like configuration, 160 MWt / 50 MWe
 """
 
 from __future__ import annotations
@@ -103,7 +103,7 @@ warnings.filterwarnings("ignore")
 # ---------------------------------------------------------------
 class PinCell:
     """
-    NuScale US600-like standard pin-cell dimensions
+    NuScale Power Module-like standard pin-cell dimensions
     (17x17 Westinghouse-type fuel assembly; manuscript Section 2.4).
     """
     PITCH        = 1.26      # pin pitch [cm]
@@ -205,7 +205,7 @@ def build_pincell_model(
         boron_ppm:  float = 0.0,
 ) -> tuple:
     """
-    Build and export the NuScale US600-like 2D infinite pin-cell
+    Build and export the NuScale Power Module-like 2D infinite pin-cell
     OpenMC model (manuscript Section 2.4).
 
     The model uses:
@@ -642,14 +642,14 @@ class ParametricSweep:
         path  = self.out_dir / fname
         meta  = {
             "description": (
-                "Screening-level NuScale US600-like pin-cell "
+                "Screening-level NuScale Power Module-like pin-cell "
                 "neutronics degradation sweep"
             ),
             "manuscript": (
                 "Kim, D. Screening-Level Pin-Cell Neutronic Sensitivity "
-                "of a NuScale US600-Like SMR Fuel Lattice to Coolant-Density "
-                "Perturbations from Simplified Primary-System Degradation Models. "
-                "Journal of Nuclear Engineering (submitted)."
+                "of a NuScale Power Module-Like SMR Fuel Lattice to Coolant-State "
+                "Perturbations from Primary-System Degradation. "
+                "Kerntechnik, manuscript KERN-2026-0074 (under revision)."
             ),
             "model"      : "2D infinite pin cell, 17x17 Westinghouse-type",
             "scenario"   : self.scenario.name,
@@ -776,7 +776,7 @@ def run_test(
 def _parse():
     p = argparse.ArgumentParser(
         description=(
-            "Screening-level NuScale US600-like pin-cell neutronics "
+            "Screening-level NuScale Power Module-like pin-cell neutronics "
             "degradation parametric sweep"
         )
     )

@@ -1,15 +1,15 @@
 """
 degradation_scenarios.py
 ========================
-NuScale US600-like SMR primary-system degradation scenario models.
+NuScale Power Module-like SMR primary-system degradation scenario models.
 
 Companion code for:
   Kim, D. "Screening-Level Pin-Cell Neutronic Sensitivity of a NuScale
-  US600-Like SMR Fuel Lattice to Coolant-Density Perturbations from
-  Simplified Primary-System Degradation Models." Journal of Nuclear
-  Engineering (submitted).
+  Power Module-Like SMR Fuel Lattice to Coolant-State Perturbations from
+  Primary-System Degradation." Kerntechnik, manuscript KERN-2026-0074
+  (under revision).
 
-Design basis: NuScale US600-like configuration
+Design basis: NuScale Power Module-like configuration
   - Thermal power   : 160 MWt
   - Electric power   : 50 MWe
   - Primary coolant circulation: fully passive natural circulation (no pumps)
@@ -19,7 +19,7 @@ Scope and limitations
 These are SIMPLIFIED PARAMETRIC degradation models intended to generate
 physically motivated coolant-property perturbations for a screening-level
 pin-cell neutronics study. They are NOT validated component degradation
-models for the actual NuScale US600 design. See manuscript Section 2.5
+models for the actual NuScale Power Module design. See manuscript Section 2.5
 for the full scope and limitations discussion.
 
 Three degradation mechanisms (RPV-internal, consistent with the integral
@@ -33,7 +33,7 @@ PWR layout, which has no external primary piping):
   BYPASS_LEAKAGE   : Core barrel-to-shroud gap leakage -> hot coolant
                       mixes directly into the core inlet stream.
 
-NuScale US600-like nominal operating conditions (FSAR Tier 2, Rev. 5)
+NuScale Power Module-like nominal operating conditions (FSAR Tier 2, Rev. 5)
 -----------------------------------------------------------------------
   Operating pressure         : 12.755 MPa (1850 psia)      FSAR Table 4.1-1
   Core inlet temperature      : 258.11 degC (496.6 degF)    FSAR Table 5.1-2
@@ -75,11 +75,11 @@ from loop_balance import PlantPoint, solve_loop
 
 
 # ---------------------------------------------------------------
-# NuScale US600-like nominal operating conditions
+# NuScale Power Module-like nominal operating conditions
 # ---------------------------------------------------------------
 class NominalConditions:
     """
-    NuScale US600-like nominal power module (NPM) operating conditions.
+    NuScale Power Module (NPM) nominal operating conditions.
     """
     # -- Thermal-hydraulics --------------------------------------
     # Values from the NuScale FSAR Tier 2, Rev. 5:
@@ -253,43 +253,85 @@ class RiserCorrosionModel:
     """
     Hot riser tube inner-wall Fe3O4 oxide layer growth.
 
-    delta(eta) = delta_max * sqrt(eta), an assumed parabolic profile.
+    delta(eta) = delta_max * sqrt(eta), an assumed monotone profile with no
+    kinetic content: it is not a fitted growth law, it is not tied to a rate
+    constant, and it implies no relation to operating time (manuscript
+    Section 2.2). The degradation law modeled here is the flow-area
+    reduction from oxide thickening alone; deposit surface roughness is
+    deliberately NOT folded into this law (see roughness_sensitivity()
+    below and manuscript Section 3 / response M9).
 
     The hydraulic response is delegated to loop_balance.solve_loop(), which
-    applies both the flow-area reduction and the added surface roughness and
-    lets the buoyancy head respond (reviewer points M7 and M9). An earlier
-    version applied a fixed (D0/D_eff)^5 resistance ratio with the buoyancy
-    head held constant, which modeled only half of the coupling and left
-    roughness out altogether.
-
-    Roughness is the dominant hydraulic effect for a deposit, but the riser is
-    hydraulically smooth: at 3 um the relative roughness is 2e-6 and even a
-    50 um deposit gives 4e-5, against Re of about 6.6e6. The scenario is
-    therefore a measured null rather than an assumed one, and the loop
-    temperatures do not move at any level. delta_max = 3.0 mm is used as a
-    conservative parametric perturbation, not a validated NuScale riser
-    corrosion prediction (manuscript Section 2.2); because the nominal riser
-    inner diameter is large, this scenario serves as a negative-control case.
+    lets the buoyancy head respond to the resulting temperature change
+    (reviewer points M7 and M9); an earlier version applied a fixed
+    (D0/D_eff)^5 resistance ratio with the buoyancy head held constant,
+    which modeled only half of the coupling.
     """
     OXIDE_MAX_M: float = 3e-3     # delta_max = 3.0 mm
-    DEPOSIT_ROUGHNESS_M: float = 3e-6   # added RMS roughness of magnetite deposit, Turner et al. (2000)
+    DEPOSIT_ROUGHNESS_M: float = 3e-6   # representative added RMS roughness of a
+                                         # magnetite deposit, Turner et al. (2000);
+                                         # used only by roughness_sensitivity(), not
+                                         # by the reported degradation sweep below
     NOMINAL_FL0: float = 5.0      # nominal (normalized) friction parameter
 
     def compute(self, level: float) -> dict:
         """
         Oxide growth on the riser inner wall, solved with the loop balance.
 
-        Both the flow-area reduction and the added surface roughness are
-        applied, and the buoyancy head is allowed to respond to the resulting
-        temperature change (reviewer points M7 and M9). The original model
-        held the buoyancy head fixed while changing only the resistance.
+        The flow-area reduction from oxide thickening is applied and the
+        buoyancy head is allowed to respond to the resulting temperature
+        change (reviewer points M7 and M9). The original model held the
+        buoyancy head fixed while changing only the resistance.
+
+        Deposit surface roughness is intentionally excluded from this
+        degradation law (eps_m=0.0): see roughness_sensitivity() for a
+        separate, explicit check of whether adding realistic deposit
+        roughness changes the whole-loop solution appreciably. It does not
+        (manuscript Section 3 / response M9), which is why it is reported
+        as a standalone sensitivity rather than folded into the swept
+        degradation level.
         """
         _validate_level(level)
         delta_ox = self.OXIDE_MAX_M * math.sqrt(level)
         st = solve_loop(_plant_point(),
                         delta_ox_m=delta_ox,
-                        eps_m=self.DEPOSIT_ROUGHNESS_M)
+                        eps_m=0.0)
         return _as_dict(st, riser_dfl=st.riser_friction_increase)
+
+    def roughness_sensitivity(self, level: float = 1.0,
+                               eps_m: float | None = None) -> dict:
+        """
+        Standalone hydraulic sensitivity: does adding deposit surface
+        roughness on top of the oxide-thickness state at the given
+        degradation level change the whole-loop solution appreciably?
+
+        This is evaluated separately from compute() (reviewer point M9):
+        the reported degradation sweep varies only the oxide-driven
+        flow-area reduction (eps_m=0.0); this method compares that smooth
+        baseline against the same oxide state with an added roughness
+        eps_m (default: DEPOSIT_ROUGHNESS_M, a representative 3 um
+        magnetite deposit roughness, Turner et al. 2000).
+
+        Returns the smooth-vs-rough state and their differences in primary
+        flow and core-average coolant density, so that the whole-loop
+        effect (not just the local upper-riser friction factor) is what is
+        being judged.
+        """
+        _validate_level(level)
+        eps = self.DEPOSIT_ROUGHNESS_M if eps_m is None else eps_m
+        delta_ox = self.OXIDE_MAX_M * math.sqrt(level)
+        st_smooth = solve_loop(_plant_point(), delta_ox_m=delta_ox, eps_m=0.0)
+        st_rough = solve_loop(_plant_point(), delta_ox_m=delta_ox, eps_m=eps)
+        return dict(
+            level=level,
+            eps_m=eps,
+            mdot_smooth_kg_s=st_smooth.mdot_total_kg_s,
+            mdot_rough_kg_s=st_rough.mdot_total_kg_s,
+            delta_mdot_kg_s=st_rough.mdot_total_kg_s - st_smooth.mdot_total_kg_s,
+            T_core_avg_smooth_C=st_smooth.T_core_avg_C,
+            T_core_avg_rough_C=st_rough.T_core_avg_C,
+            delta_T_core_avg_C=st_rough.T_core_avg_C - st_smooth.T_core_avg_C,
+        )
 
 
 # ---------------------------------------------------------------
@@ -485,7 +527,7 @@ if __name__ == '__main__':
 
     nc = NominalConditions
     print("=" * 65)
-    print("NuScale US600-like (160 MWt / 50 MWe) RPV-internal degradation models")
+    print("NuScale Power Module-like (160 MWt / 50 MWe) RPV-internal degradation models")
     print(f"  P={nc.P_MPa} MPa  T_avg={nc.T_CORE_AVG_C} degC  mdot0={nc.MDOT_TOTAL_KG_S} kg/s")
     print("=" * 65)
 
@@ -495,6 +537,25 @@ if __name__ == '__main__':
         for lv in [0.0, 0.25, 0.5, 0.75, 1.0]:
             print(model.compute(lv).summary())
             print()
+
+    print(f"\n{'-' * 55}\n  RISER_CORROSION roughness sensitivity (reviewer point M9)\n{'-' * 55}")
+    print("Standalone check: does adding deposit surface roughness on top of the")
+    print("oxide-thickness state change the whole-loop solution appreciably?")
+    print("The reported degradation sweep above uses eps_m=0.0 throughout.\n")
+    riser = RiserCorrosionModel()
+    for level, eps_label, eps_val in [
+        (1.0, "+3 um (Turner et al. 2000, representative)", None),
+        (1.0, "+50 um (deliberately extreme sensitivity)", 50e-6),
+    ]:
+        s = riser.roughness_sensitivity(level=level, eps_m=eps_val)
+        print(f"  level={level:.2f}  eps={eps_label}")
+        print(f"    mdot: smooth={s['mdot_smooth_kg_s']:.4f} kg/s  "
+              f"rough={s['mdot_rough_kg_s']:.4f} kg/s  "
+              f"delta={s['delta_mdot_kg_s']:.4e} kg/s")
+        print(f"    T_core_avg: smooth={s['T_core_avg_smooth_C']:.4f} degC  "
+              f"rough={s['T_core_avg_rough_C']:.4f} degC  "
+              f"delta={s['delta_T_core_avg_C']:.4e} degC")
+        print()
 
     if '--csv' in sys.argv:
         sample = generate_sweep_table(ScenarioType.RISER_CORROSION, 2)
