@@ -155,8 +155,8 @@ for ax, (d, mk, title, xmap, xlab, mark, mlbl) in zip(axes, panels):
 
 axes[0].set_ylabel("Reactivity change  $\\Delta\\rho$  (pcm)")
 axes[0].text(0.04, 0.05,
-             f"shaded band:  $\\pm\\sqrt{{2}}\\sigma$ = {SIGMA_R:.2f} pcm\n"
-             f"(difference of two independent runs)",
+             f"shaded band:  $\\pm${SIGMA_R:.2f} pcm differencing SD\n"
+             f"(difference of two independent runs, reactivity units)",
              transform=axes[0].transAxes, fontsize=8.5, color=MUTED,
              va="bottom", ha="left", linespacing=1.3)
 
