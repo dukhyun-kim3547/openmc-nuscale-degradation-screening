@@ -37,11 +37,18 @@ revised_sweep_data/
     bypass_leakage_21pt.csv
     riser_corrosion_21pt.csv      - Revised-manuscript sweep results (corrected FSAR-based
                                     nominal conditions and loop closure; see below)
+    sg_fouling_boron1235ppm_11pt.csv
+                                  - SG-fouling sweep repeated at 1235 ppm soluble boron
+                                    (FSAR equilibrium-cycle BOC concentration, reviewer M4)
 figures/
     generate_figures.py           - Predates the current two-figure format (Minor 7); does
                                     not reproduce the figures currently in this repository
     generate_figures_revised.py   - Reproduces Figure 1 and Figure 2 exactly as they appear
                                     in the revised manuscript, from revised_sweep_data/
+checks/
+    fit_coefficient.py            - Independent numerical check of the coefficient printed
+                                    on Figure 1 (Section 3.3) and the boron comparison
+                                    (Section 3.5), fitted directly from revised_sweep_data/
 ```
 
 ### Two generations of sweep data
@@ -89,6 +96,12 @@ python figures/generate_figures_revised.py
 
 (`figures/generate_figures.py` is retained for history but predates the
 current two-figure format and does not reproduce the figures above.)
+
+Independently check the fitted coefficient and the boron comparison:
+
+```bash
+python checks/fit_coefficient.py
+```
 
 Each eigenvalue calculation uses 500,000 particles per batch with 110 total batches, of which 10 are inactive. The batch-statistics uncertainty on the eigenvalue is 12.61 pcm; a difference of two independent calculations therefore carries sqrt(2) sigma, which is 17.84 pcm expressed in delta-k and 9.00 pcm expressed in reactivity.
 

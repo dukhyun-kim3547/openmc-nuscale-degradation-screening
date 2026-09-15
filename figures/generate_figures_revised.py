@@ -52,10 +52,9 @@ INK, MUTED = "#1a1a1a", "#6b6b6b"
 
 SIGMA_R = 9.00          # batch-statistics standard deviation [pcm], reactivity units (M11)
 # The 42-point coefficient and its uncertainty are computed directly here,
-# using the same max(OLS, propagated) convention as the rest of the
-# analysis (see the manuscript's statistical-methodology section). Not
-# hardcoded -- if the underlying sweep changes, the figure annotation
-# changes with it.
+# using the same max(OLS, propagated) convention as checks/fit_coefficient.py
+# (the independent numerical check of this same value). Not hardcoded --
+# if the underlying sweep changes, the figure annotation changes with it.
 
 
 def load(name):
