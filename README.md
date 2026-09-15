@@ -32,9 +32,30 @@ keff_vs_degradation_sg_fouling.csv
 keff_vs_degradation_bypass_leakage.csv
 keff_vs_degradation_riser_corrosion.csv
                                   - As-submitted sweep results (unchanged since 2026-07-01)
+revised_sweep_data/
+    sg_fouling_21pt.csv
+    bypass_leakage_21pt.csv
+    riser_corrosion_21pt.csv      - Revised-manuscript sweep results (corrected FSAR-based
+                                    nominal conditions and loop closure; see below)
 figures/
-    generate_figures.py           - Reproduces all manuscript figures
+    generate_figures.py           - Predates the current two-figure format (Minor 7); does
+                                    not reproduce the figures currently in this repository
+    generate_figures_revised.py   - Reproduces Figure 1 and Figure 2 exactly as they appear
+                                    in the revised manuscript, from revised_sweep_data/
 ```
+
+### Two generations of sweep data
+
+The three `keff_vs_degradation_*.csv` files at the repository root are the
+as-submitted sweep (2026-07-01) and are kept unchanged as the basis for the
+manuscript's original-submission reproducibility statement; they are not
+regenerated or overwritten by any script here.
+
+`revised_sweep_data/` is a separate, later sweep run against the corrected
+FSAR Tier 2 nominal conditions and the natural-circulation loop closure
+added during revision (`degradation_models/loop_balance.py`). Figure 1 and
+Figure 2, as they appear in the revised manuscript, are generated from this
+data by `figures/generate_figures_revised.py`, not from the root-level CSVs.
 
 `degradation_scenarios.py` and `iapws_coolant.py` import their sibling modules
 by bare name (for example `from loop_balance import ...`); each script that
@@ -60,11 +81,14 @@ python openmc_model/parametric_sweep.py --scenario sg_fouling --particles 500000
 
 A common random-number seed across all degradation levels (`--seed`, default 1) and a borated coolant option (`--boron-ppm`, reviewer point M4; the FSAR equilibrium-cycle beginning-of-cycle concentration is 1235 ppm) are also available; see `--help` for the rest of the resumable, per-eta-index CLI.
 
-Regenerate figures from existing CSV results:
+Regenerate the manuscript figures from the revised sweep data:
 
 ```bash
-python figures/generate_figures.py
+python figures/generate_figures_revised.py
 ```
+
+(`figures/generate_figures.py` is retained for history but predates the
+current two-figure format and does not reproduce the figures above.)
 
 Each eigenvalue calculation uses 500,000 particles per batch with 110 total batches, of which 10 are inactive. The batch-statistics uncertainty on the eigenvalue is 12.61 pcm; a difference of two independent calculations therefore carries sqrt(2) sigma, which is 17.84 pcm expressed in delta-k and 9.00 pcm expressed in reactivity.
 
