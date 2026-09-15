@@ -26,20 +26,26 @@ pipeline, automatically supplying validated coolant properties for any
 of the degradation scenarios defined in degradation_scenarios.py.
 
 IAPWS-IF97 implementation verification at nominal conditions
-(T = 284.0 degC, P = 12.76 MPa)
-------------------------------------------------------------
-  rho     = 752.9985 kg/m^3
-  cp      = 5199.6  J/(kg*K)   (0.008% deviation from the constant
-                                 5200 J/(kg*K) used elsewhere in the code)
-  mu      = 94.00   microPa*s
-  k       = 584.05  mW/(m*K)
-  h       = 1254.28 kJ/kg
-  T_sat @ 12.76 MPa = 329.41 degC
+(T = 285.85 degC core-average, P = 12.755 MPa; FSAR Tier 2, Rev. 5)
+--------------------------------------------------------------------
+  rho     = 749.5396 kg/m^3
+  cp      = 5234.3   J/(kg*K)
+  mu      = 93.25    microPa*s
+  k       = 581.39   mW/(m*K)
+  h       = 1263.937 kJ/kg
+  T_sat @ 12.755 MPa = 329.379 degC
+
+A constant specific heat is not used anywhere in this pipeline: the IF97
+cp varies by about 20 % over the core temperature rise, so all energy
+balances use IF97 enthalpy differences instead (see loop_balance.py and
+NominalConditions in degradation_scenarios.py).
 
 This implementation is verified against NIST WebBook reference data at
 three temperatures spanning the NuScale US600-like operating range
 (manuscript Table 1, ref. [17]); maximum deviation in both rho and cp
-is less than 0.002%.
+is less than 0.002%. See also tests/test_if97_regression.py, which pins
+the property routine to the three official IAPWS R7-97 Region 1
+verification points.
 
 Design basis: NuScale US600-like configuration, 160 MWt / 50 MWe
 
@@ -52,11 +58,21 @@ References:
 from __future__ import annotations
 
 import dataclasses
+import sys
 import warnings
+from pathlib import Path
 from typing import Iterator
 
 import numpy as np
 from iapws import IAPWS97
+
+# See the matching comment in openmc_model/parametric_sweep.py: the
+# companion modules live in sibling directories and import each other by
+# bare name, so degradation_models/ is added to sys.path here.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_p = str(_REPO_ROOT / "degradation_models")
+if _p not in sys.path:
+    sys.path.insert(0, _p)
 
 from degradation_scenarios import (
     CoolantState,
@@ -75,19 +91,16 @@ class PhysicsLimits:
     NuScale US600-like operating / modeling limits used for diagnostic
     classification of computed coolant states.
 
-    IMPORTANT: These limits (T_OUTLET_CEILING_C in particular) define a
-    SINGLE-PHASE MODEL VALIDITY CEILING for the present screening-level
-    workflow, not a simulated reactor protection system trip. See
-    manuscript Section 2.2 for the corresponding discussion of the
-    SG-fouling coolant-state ceiling at T_sat - 5 degC = 324.41 degC.
-    The value used here (320.0 degC) is a conservative internal
-    diagnostic threshold used for phase/safety-margin bookkeeping in
-    this module and is independent of the ceiling value reported in the
-    manuscript; it is not derived from any published NuScale design
-    basis document.
+    IMPORTANT: T_OUTLET_CEILING_C (320.0 degC) is a conservative internal
+    diagnostic threshold used only for phase/safety-margin bookkeeping in
+    this module. It is not a simulated reactor protection system trip and
+    is not derived from any published NuScale design basis document. The
+    manuscript itself (reviewer point M10) imposes no subcooling threshold
+    on the swept coolant states; see the SGFoulingModel docstring in
+    degradation_scenarios.py.
     """
-    # IAPWS-computed value (at 12.76 MPa)
-    T_SAT_C: float = 329.41          # saturation temperature [degC]
+    # IAPWS-computed value (at 12.755 MPa, the FSAR-based nominal pressure)
+    T_SAT_C: float = 329.38          # saturation temperature [degC]
 
     # Internal diagnostic thresholds (conservative estimates; not
     # validated NuScale design-basis trip setpoints)
@@ -222,11 +235,11 @@ def compute_properties(
     P_MPa : float
         Coolant pressure [MPa]
     degradation_level : float
-        Degradation level eta in [0.0, 1.0] — recorded for bookkeeping
+        Degradation level eta in [0.0, 1.0], recorded for bookkeeping
     scenario_name : str
-        Scenario name — recorded for bookkeeping
+        Scenario name, recorded for bookkeeping
     T_sat_C : float
-        Saturation temperature [degC] — default corresponds to 12.76 MPa
+        Saturation temperature [degC]; default corresponds to 12.755 MPa
 
     Returns
     -------
@@ -263,7 +276,7 @@ def compute_properties(
 
     # Change relative to nominal
     nc = NominalConditions
-    rho_nom = IAPWS97(T=nc.T_AVG_C + 273.15, P=nc.P_MPa).rho
+    rho_nom = IAPWS97(T=nc.T_CORE_AVG_C + 273.15, P=nc.P_MPa).rho
     delta_rho = rho - rho_nom
     delta_rho_pct = delta_rho / rho_nom * 100.0
 
@@ -465,7 +478,7 @@ if __name__ == '__main__':
     print("=" * 68)
     print("IAPWS-IF97 nominal-condition verification (NuScale US600-like, 160 MWt/50 MWe)")
     print("=" * 68)
-    nominal = compute_properties(nc.T_AVG_C, nc.P_MPa, scenario_name='NOMINAL')
+    nominal = compute_properties(nc.T_CORE_AVG_C, nc.P_MPa, scenario_name='NOMINAL')
     print(nominal.summary())
     print(f"\n  OpenMC density input  : {nominal.openmc_material_density()} g/cm^3")
     print(f"  T_sat @ {nc.P_MPa} MPa : {PhysicsLimits.T_SAT_C} degC")

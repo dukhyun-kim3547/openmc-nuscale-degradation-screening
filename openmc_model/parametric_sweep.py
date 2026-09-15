@@ -60,6 +60,7 @@ import glob
 import json
 import os
 import shutil
+import sys
 import time
 import warnings
 from dataclasses import dataclass, asdict
@@ -67,6 +68,17 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+
+# This repository splits the companion code across sibling directories
+# (degradation_models/, thermal_hydraulics/, openmc_model/) for readability.
+# The modules import each other by bare name, so the sibling directories are
+# added to sys.path here, relative to this file, rather than requiring
+# PYTHONPATH to be set by hand.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+for _sibling in ("degradation_models", "thermal_hydraulics"):
+    _p = str(_REPO_ROOT / _sibling)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from degradation_scenarios import (
     DegradationModel, NominalConditions, ScenarioType,
@@ -144,6 +156,44 @@ def _find_cross_sections(user_path: Optional[str] = None) -> Optional[str]:
 # ---------------------------------------------------------------
 # 2D infinite pin-cell model builder
 # ---------------------------------------------------------------
+# ---------------------------------------------------------------
+# Soluble boron (reviewer point M4)
+# ---------------------------------------------------------------
+def boron_atom_ratio(ppm_wt: float) -> float:
+    """
+    Return the boron-to-O16 atom ratio for a given weight-ppm of natural
+    boron in the coolant solution.
+
+    The coolant is defined with H1 : O16 = 2 : 1 in atom fractions, so the
+    boron content must also be given as an atom fraction. Nuclide masses are
+    used rather than natural atomic weights because the model specifies H1
+    and O16 explicitly.
+
+    Convention: ppm is by weight of natural boron in the solution, and the
+    total material density is held at the IF97 pure-water value, so boron
+    displaces water rather than adding to it.
+
+    Masses and isotopic abundances are read from OpenMC rather than hard-coded,
+    so that the boron actually loaded by add_element matches the requested
+    weight concentration exactly. Hard-coding B-10 at 0.199 against OpenMC's
+    0.1982 would leave the B-10 number density 0.4 % low, which is immaterial
+    for the ratio of coefficients but wrong for a reported concentration.
+    """
+    import openmc.data as _d
+    M_H1  = _d.atomic_mass("H1")
+    M_O16 = _d.atomic_mass("O16")
+    # Natural boron, taken from OpenMC's own abundance and mass tables so that
+    # the isotopic split used here is exactly the one add_element applies.
+    _ab = {k: v for k, v in _d.NATURAL_ABUNDANCE.items() if k in ("B10", "B11")}
+    _tot = sum(_ab.values())
+    M_B = sum(_ab[k] * _d.atomic_mass(k) for k in _ab) / _tot
+    M_W = 2.0 * M_H1 + M_O16
+
+    m_b = ppm_wt * 1.0e-6
+    n_b = m_b / M_B
+    n_w = (1.0 - m_b) / M_W
+    return n_b / n_w
+
 def build_pincell_model(
         coolant_density: float,
         T_moderator_K:   float,
@@ -151,6 +201,8 @@ def build_pincell_model(
         batches:    int = 110,
         inactive:   int = 10,
         run_dir:    Path = Path("openmc_run"),
+        seed:       int = 1,
+        boron_ppm:  float = 0.0,
 ) -> tuple:
     """
     Build and export the NuScale US600-like 2D infinite pin-cell
@@ -195,6 +247,8 @@ def build_pincell_model(
     coolant = openmc.Material(name="coolant")
     coolant.add_nuclide("H1",  2.0, "ao")
     coolant.add_nuclide("O16", 1.0, "ao")
+    if boron_ppm > 0.0:
+        coolant.add_element("B", boron_atom_ratio(boron_ppm), "ao")
     coolant.add_s_alpha_beta("c_H_in_H2O")
     coolant.set_density("g/cm3", coolant_density)
     coolant.temperature = T_moderator_K
@@ -243,6 +297,12 @@ def build_pincell_model(
     settings.particles = particles
     settings.batches   = batches
     settings.inactive  = inactive
+    settings.seed       = seed
+    _emesh = openmc.RegularMesh()
+    _emesh.lower_left  = [-pc.PITCH/2, -pc.PITCH/2, -1]
+    _emesh.upper_right = [ pc.PITCH/2,  pc.PITCH/2,  1]
+    _emesh.dimension   = [4, 4, 1]
+    settings.entropy_mesh = _emesh
     settings.temperature = {
         "default": T_moderator_K,
         "method":  "interpolation",
@@ -270,22 +330,34 @@ def build_pincell_model(
 # ---------------------------------------------------------------
 # OpenMC execution and result collection
 # ---------------------------------------------------------------
-def run_and_collect(run_dir: Path, batches: int) -> tuple[float, float]:
+def run_and_collect(
+        run_dir: Path,
+        batches: int,
+) -> tuple[float, float]:
     """
     Execute OpenMC in run_dir and return (keff, keff_std).
 
-    Uses glob to locate the statepoint file, which avoids
-    dependence on the exact batch number in the filename.
+    FIX: statepoint selection bug.
+      sorted() sorts as strings, so "statepoint.110.h5" < "statepoint.20.h5".
+      If a stale 20-batch statepoint file is left over from an earlier run, it
+      would be picked up instead of the current one, recording the wrong
+      keff. Stale statepoint files are removed before the run, and the
+      remaining files are sorted by batch number rather than by filename.
     """
     orig_dir = Path.cwd()
     os.chdir(run_dir)
     try:
+        for stale in glob.glob("statepoint.*.h5"):
+            os.remove(stale)
+
         openmc.run(output=False)
-        sp_files = sorted(glob.glob("statepoint.*.h5"))
+
+        sp_files = sorted(
+            glob.glob("statepoint.*.h5"),
+            key=lambda p: int(p.split(".")[1]),
+        )
         if not sp_files:
-            raise FileNotFoundError(
-                f"No statepoint file found in {run_dir}"
-            )
+            raise FileNotFoundError(f"No statepoint file found in {run_dir}")
         with openmc.StatePoint(sp_files[-1]) as sp:
             keff     = float(sp.keff.n)
             keff_std = float(sp.keff.s)
@@ -348,25 +420,52 @@ class ParametricSweep:
 
     def __init__(
             self,
-            scenario:          ScenarioType = ScenarioType.SG_FOULING,
-            n_steps:           int   = 21,
-            particles:         int   = 50_000,
-            batches:           int   = 110,
-            inactive:          int   = 10,
-            output_dir:        str   = "results",
-            nuclear_data_path: Optional[str] = None,
-            verbose:           bool  = True,
+            scenario:           ScenarioType = ScenarioType.SG_FOULING,
+            n_steps:            int   = 21,
+            particles:          int   = 50_000,
+            batches:            int   = 110,
+            inactive:           int   = 10,
+            output_dir:         str   = "results",
+            nuclear_data_path:  Optional[str] = None,
+            verbose:            bool  = True,
+            eta_indices:        Optional[list] = None,
+            seed:               int   = 1,
+            resume:             bool  = True,
+            boron_ppm:          float = 0.0,
     ):
-        self.scenario   = scenario
-        self.n_steps    = n_steps
-        self.particles  = particles
-        self.batches    = batches
-        self.inactive   = inactive
-        self.out_dir    = Path(output_dir)
-        self.ndata_path = nuclear_data_path
-        self.verbose    = verbose
+        self.scenario    = scenario
+        self.n_steps     = n_steps
+        self.particles   = particles
+        self.batches     = batches
+        self.inactive    = inactive
+        self.out_dir     = Path(output_dir)
+        self.ndata_path  = nuclear_data_path
+        self.verbose     = verbose
+        self.eta_indices = eta_indices
+        self.seed        = seed
+        self.resume      = resume
+        self.boron_ppm   = boron_ppm
         self.results:   list[SweepPoint] = []
         self._k_nominal: Optional[float] = None
+
+    def _point_path(self, idx: int) -> Path:
+        """Partial-CSV path for a single eta index."""
+        return (self.out_dir / "parts" /
+                f"{self.scenario.name.lower()}_eta{idx:03d}.csv")
+
+    def _write_point(self, idx: int, pt) -> Path:
+        """Write a single SweepPoint to disk immediately (atomic replace)."""
+        path = self._point_path(idx)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        row = asdict(pt)
+        row["eta_index"] = idx
+        tmp = path.with_suffix(".tmp")
+        with open(tmp, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=list(row.keys()))
+            w.writeheader()
+            w.writerow(row)
+        tmp.replace(path)
+        return path
 
     def _log(self, msg: str) -> None:
         if self.verbose:
@@ -407,6 +506,8 @@ class ParametricSweep:
                 batches         = self.batches,
                 inactive        = self.inactive,
                 run_dir         = run_dir,
+                seed            = self.seed,
+                boron_ppm       = self.boron_ppm,
             )
             keff, keff_std = run_and_collect(run_dir, self.batches)
         else:
@@ -417,7 +518,7 @@ class ParametricSweep:
             MTC_pcm = -30.0
             k0      = 1.0320
             nc      = NominalConditions
-            dT      = props.T_C - nc.T_AVG_C
+            dT      = props.T_C - nc.T_CORE_AVG_C
             drho    = props.delta_rho_pct
             keff     = k0 + (MTC_pcm * dT + (-120.0) * abs(drho) * np.sign(drho)) * 1e-5
             keff_std = 0.00015 + abs(np.random.normal(0, 0.00003))
@@ -426,46 +527,70 @@ class ParametricSweep:
         return keff, abs(keff_std), time.perf_counter() - t0
 
     def run(self) -> list[SweepPoint]:
-        """Execute the full degradation-level sweep."""
+        """
+        Execute the sweep.
+
+        If eta_indices is given, only those indices are computed. This is
+        meant for process-level parallelism: os.chdir is process-global, so
+        this must not be parallelized with threads or a multiprocessing pool.
+
+        Each point is written to its own eta-index CSV immediately after it
+        is computed, so an interrupted run can be resumed with --resume.
+        delta_keff_pcm is not computed here, because a process that does not
+        include index 0 has no reference eigenvalue of its own; it is filled
+        in at the merge step instead.
+        """
         self.out_dir.mkdir(parents=True, exist_ok=True)
-        mode = "OpenMC" if OPENMC_AVAILABLE else "Mock (pipeline test only)"
+        mode = "OpenMC" if OPENMC_AVAILABLE else "Mock"
 
         if OPENMC_AVAILABLE:
             self._setup_nuclear_data()
 
+        levels = np.linspace(0.0, 1.0, self.n_steps)
+
+        if self.eta_indices is None:
+            todo = list(range(len(levels)))
+        else:
+            todo = sorted(set(int(i) for i in self.eta_indices))
+            bad = [i for i in todo if not 0 <= i < len(levels)]
+            if bad:
+                raise ValueError(
+                    f"eta index out of range for n_steps={self.n_steps}: {bad}")
+
         self._log("=" * 65)
-        self._log(f"NuScale US600-like pin-cell neutronics sweep  [{mode}]")
-        self._log(f"  Scenario      : {self.scenario.name}")
-        self._log(f"  Steps         : {self.n_steps}  (eta = 0.0 -> 1.0)")
+        self._log(f"Parametric sweep  [{mode}]")
+        self._log(f"  Scenario       : {self.scenario.name}")
+        self._log(f"  Steps          : {self.n_steps}  (eta = 0.0 -> 1.0)")
         self._log(f"  Particles/batch: {self.particles:,}  Batches: {self.batches}")
         self._log(f"  Inactive       : {self.inactive}  Active: {self.batches - self.inactive}")
+        self._log(f"  Seed           : {self.seed}")
+        self._log(f"  Boron          : {self.boron_ppm:.1f} ppm")
+        self._log(f"  Target indices : {todo}")
         self._log(f"  Output dir     : {self.out_dir.resolve()}")
         self._log("=" * 65)
 
-        levels = np.linspace(0.0, 1.0, self.n_steps)
         self.results = []
 
-        for i, level in enumerate(levels):
-            th    = DegradationModel(self.scenario).compute(float(level))
+        for i in todo:
+            level = float(levels[i])
+            out_path = self._point_path(i)
+
+            if self.resume and out_path.exists() and out_path.stat().st_size > 0:
+                self._log(f"  [eta={level:.3f}] already done -- skipping ({out_path.name})")
+                continue
+
+            th    = DegradationModel(self.scenario).compute(level)
             props = from_coolant_state(th)
 
             if not props.is_safe():
-                self._log(
-                    f"  [eta={level:.3f}] Coolant state approaches "
-                    f"single-phase validity limit "
-                    f"(T_outlet={th.T_outlet_C:.1f} degC, phase={props.phase}) "
-                    f"-- continuing with capped state"
-                )
+                self._log(f"  [eta={level:.3f}] approaching single-phase validity limit "
+                          f"(T={th.T_outlet_C:.1f} degC, {props.phase}) -- continuing")
 
-            keff, keff_std, wt = self._run_single(float(level))
-
-            if i == 0:
-                self._k_nominal = keff
-            delta_pcm = (keff - self._k_nominal) * 1e5
+            keff, keff_std, wt = self._run_single(level)
 
             pt = SweepPoint(
                 scenario          = self.scenario.name,
-                degradation_level = round(float(level), 4),
+                degradation_level = round(level, 4),
                 T_inlet_C         = round(th.T_inlet_C, 4),
                 T_outlet_C        = round(th.T_outlet_C, 4),
                 T_avg_C           = round(th.T_avg_C, 4),
@@ -478,29 +603,28 @@ class ParametricSweep:
                 subcooling_C      = round(props.subcooling_C, 3),
                 keff              = round(keff, 6),
                 keff_std          = round(keff_std, 6),
-                delta_keff_pcm    = round(delta_pcm, 2),
+                delta_keff_pcm    = None,
                 is_safe           = props.is_safe(),
                 wall_time_s       = round(wt, 2),
             )
             self.results.append(pt)
+            self._write_point(i, pt)
 
-            eta_pct = (i + 1) / len(levels) * 100
             self._log(
-                f"  [{eta_pct:5.1f}%]  eta={level:.3f}  "
-                f"T={props.T_C:.2f} degC  rho={props.rho_g_cm3:.6f} g/cm^3  "
-                f"k={keff:.5f}+/-{keff_std:.5f}  "
-                f"Dk={delta_pcm:+.1f} pcm  ({wt:.1f}s)"
+                f"  [idx {i:3d}]  eta={level:.3f}  "
+                f"T={props.T_C:.2f} degC  rho={props.rho_g_cm3:.6f}  "
+                f"k={keff:.5f}+/-{keff_std:.5f}  ({wt:.1f}s)"
             )
 
         total_time = sum(r.wall_time_s for r in self.results)
-        self._log(
-            f"\n  Completed: {len(self.results)} points  "
-            f"Total wall time: {total_time:.1f} s"
-        )
+        self._log(f"\n  Completed: {len(self.results)} new points  Total wall time: {total_time:.1f} s")
         return self.results
 
     # -- Output --------------------------------------------------
     def save_csv(self, fname: Optional[str] = None) -> Path:
+        if not self.results:
+            self._log("  -> no new points, not writing a file")
+            return self.out_dir
         fname = fname or f"keff_vs_degradation_{self.scenario.name.lower()}.csv"
         path  = self.out_dir / fname
         with open(path, "w", newline="", encoding="utf-8") as f:
@@ -511,6 +635,9 @@ class ParametricSweep:
         return path
 
     def save_json(self, fname: Optional[str] = None) -> Path:
+        if not self.results:
+            self._log("  -> no new points, not writing a file")
+            return self.out_dir
         fname = fname or f"keff_vs_degradation_{self.scenario.name.lower()}.json"
         path  = self.out_dir / fname
         meta  = {
@@ -575,6 +702,9 @@ class ParametricSweep:
         }
 
     def print_summary(self) -> None:
+        if not self.results:
+            self._log("  -> no new points")
+            return
         sens = self.compute_sensitivity()
         print(f"\n{'-' * 70}")
         print(f"  {self.scenario.name}  --  sweep summary")
@@ -587,7 +717,7 @@ class ParametricSweep:
                   f"{r.T_avg_C:>12.3f}  "
                   f"{r.rho_g_cm3:>11.6f}  "
                   f"{r.keff:>9.5f}  "
-                  f"{r.delta_keff_pcm:>+9.2f}  "
+                  f"{(r.delta_keff_pcm if r.delta_keff_pcm is not None else 0.0):>+9.2f}  "
                   f"{r.keff_std:>8.5f}{flag}")
         print(f"\n  Apparent temp sensitivity    : "
               f"{sens.get('apparent_temp_sensitivity_pcm_per_C', '?'):>8} pcm/degC")
@@ -673,6 +803,20 @@ def _parse():
                    help="Inactive batches (default: 10; manuscript used 100)")
     p.add_argument("--output-dir",  default="results",
                    help="Directory for CSV/JSON output and OpenMC run directories")
+    p.add_argument("--eta-index",  type=int, action="append", default=None,
+                   help="Run only this eta index (repeatable). Index is "
+                        "against linspace(0,1,n_steps)")
+    p.add_argument("--eta-range",  default=None,
+                   help="Run an index range, e.g. '0-5' (inclusive)")
+    p.add_argument("--seed",       type=int, default=1,
+                   help="OpenMC random seed. Held common across all eta so "
+                        "that Monte Carlo noise is correlated (reviewer M11)")
+    p.add_argument("--no-resume",  action="store_true",
+                   help="Recompute even if a partial CSV exists")
+    p.add_argument("--boron-ppm", type=float, default=0.0,
+                   help="Soluble boron in the coolant, weight ppm of natural "
+                        "boron in solution. FSAR equilibrium-cycle BOC is 1235 "
+                        "(reviewer M4). Default 0 reproduces the unborated model.")
     p.add_argument("--nuclear-data", default=None,
                    help="Path to ENDF/B-VIII.0 cross_sections.xml")
     return p.parse_args()
@@ -682,13 +826,16 @@ if __name__ == "__main__":
     np.random.seed(42)
     args = _parse()
 
+    idx = args.eta_index
+    if args.eta_range:
+        _a, _b = args.eta_range.split("-")
+        idx = list(range(int(_a), int(_b) + 1))
+
     if args.test:
         run_test(args.output_dir, args.nuclear_data)
     else:
-        scenarios = (
-            list(ScenarioType) if args.all_scenarios
-            else [ScenarioType[args.scenario]]
-        )
+        scenarios = (list(ScenarioType) if args.all_scenarios
+                     else [ScenarioType[args.scenario]])
         all_results = {}
         for sc in scenarios:
             sweep = ParametricSweep(
@@ -700,6 +847,10 @@ if __name__ == "__main__":
                 output_dir=args.output_dir,
                 nuclear_data_path=args.nuclear_data,
                 verbose=True,
+                eta_indices=idx,
+                seed=args.seed,
+                resume=not args.no_resume,
+                boron_ppm=args.boron_ppm,
             )
             sweep.run()
             sweep.print_summary()
@@ -707,14 +858,12 @@ if __name__ == "__main__":
             sweep.save_json()
             all_results[sc.name] = sweep
 
-        if len(scenarios) > 1:
+        if len(scenarios) > 1 and all(sw.results for sw in all_results.values()):
             print(f"\n{'=' * 65}")
             print(f"  All scenarios -- eigenvalue change at eta = 1.0")
             print(f"{'-' * 65}")
-            print(f"  {'Scenario':<24} {'Dk(pcm)':>9}  {'d_rho(%)':>9}  {'T_avg':>10}")
+            print(f"  {'Scenario':<24} {'k':>10}  {'d_rho(%)':>9}  {'T_avg':>10}")
             for sc_name, sw in all_results.items():
                 r = sw.results[-1]
-                print(
-                    f"  {sc_name:<24} {r.delta_keff_pcm:>+9.1f}  "
-                    f"{r.delta_rho_pct:>+9.4f}%  {r.T_avg_C:>10.2f} degC"
-                )
+                print(f"  {sc_name:<24} {r.keff:>10.6f}  "
+                      f"{r.delta_rho_pct:>+9.4f}%  {r.T_avg_C:>10.2f} degC")

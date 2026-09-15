@@ -10,9 +10,9 @@ This repository contains the simulation code, raw results, and figure-generation
 
 Three simplified primary-system degradation scenarios are modeled:
 
-- **SG helical-coil fouling** — linear fouling thermal resistance
-- **Core barrel bypass leakage** — linear bypass fraction
-- **Hot riser tube corrosion** — parabolic oxide growth (negative-control case)
+- **SG helical-coil fouling** -- linear fouling thermal resistance
+- **Core barrel bypass leakage** -- linear bypass fraction
+- **Hot riser tube corrosion** -- parabolic oxide growth (negative-control case)
 
 Each scenario is parameterized by a normalized degradation level η ∈ [0, 1] across 21 discrete levels. Coolant densities are computed via the IAPWS-IF97 thermodynamic formulation and passed to OpenMC pin-cell eigenvalue calculations using ENDF/B-VIII.0 nuclear data.
 
@@ -21,6 +21,7 @@ Each scenario is parameterized by a normalized degradation level η ∈ [0, 1] a
 ```
 degradation_models/
     degradation_scenarios.py      - SG fouling, bypass leakage, riser corrosion models
+    loop_balance.py                - Natural-circulation loop closure (mdot, T_cold, T_hot)
 thermal_hydraulics/
     iapws_coolant.py              - IAPWS-IF97 coolant property coupling
 openmc_model/
@@ -34,6 +35,12 @@ keff_vs_degradation_riser_corrosion.csv
 figures/
     generate_figures.py           - Reproduces all manuscript figures
 ```
+
+`degradation_scenarios.py` and `iapws_coolant.py` import their sibling modules
+by bare name (for example `from loop_balance import ...`); each script that
+needs them adds the sibling directories to `sys.path` relative to its own
+location, so no `PYTHONPATH` setup is required to run the commands below
+from the repository root.
 
 ## Requirements
 
@@ -51,17 +58,19 @@ Run the parametric sweep for a given scenario:
 python openmc_model/parametric_sweep.py --scenario sg_fouling --particles 500000 --batches 110 --inactive 10
 ```
 
+A common random-number seed across all degradation levels (`--seed`, default 1) and a borated coolant option (`--boron-ppm`, reviewer point M4; the FSAR equilibrium-cycle beginning-of-cycle concentration is 1235 ppm) are also available; see `--help` for the rest of the resumable, per-eta-index CLI.
+
 Regenerate figures from existing CSV results:
 
 ```bash
 python figures/generate_figures.py
 ```
 
-Each eigenvalue calculation uses 500,000 particles per batch with 110 total batches, of which 10 are inactive. The batch-statistics uncertainty on the eigenvalue is 12.61 pcm; a difference of two independent calculations therefore carries √2 σ, which is 17.84 pcm expressed in Δk and 9.00 pcm expressed in reactivity.
+Each eigenvalue calculation uses 500,000 particles per batch with 110 total batches, of which 10 are inactive. The batch-statistics uncertainty on the eigenvalue is 12.61 pcm; a difference of two independent calculations therefore carries sqrt(2) sigma, which is 17.84 pcm expressed in delta-k and 9.00 pcm expressed in reactivity.
 
 ## Property verification
 
-The IAPWS-IF97 implementation is pinned to the three official Region 1 verification points of IAPWS R7-97, Table 5 — (300 K, 3 MPa), (300 K, 80 MPa) and (500 K, 3 MPa) — for specific volume, internal energy, enthalpy, entropy, isobaric heat capacity and speed of sound, together with domain assertions that every swept state lies in Region 1 and is subcooled.
+The IAPWS-IF97 implementation is pinned to the three official Region 1 verification points of IAPWS R7-97, Table 5: (300 K, 3 MPa), (300 K, 80 MPa) and (500 K, 3 MPa), for specific volume, internal energy, enthalpy, entropy, isobaric heat capacity and speed of sound, together with domain assertions that every swept state lies in Region 1 and is subcooled.
 
 ```bash
 pytest -q tests/test_if97_regression.py       # pass/fail
@@ -80,8 +89,8 @@ If you use this code or data, please cite the manuscript (citation details to be
 
 ## License
 
-MIT License — see [LICENSE](LICENSE).
+MIT License -- see [LICENSE](LICENSE).
 
 ## Contact
 
-Dukhyun Kim, Department of Nuclear Engineering, Kyung Hee University — kevin3547@khu.ac.kr
+Dukhyun Kim, Department of Nuclear Engineering, Kyung Hee University -- kevin3547@khu.ac.kr
