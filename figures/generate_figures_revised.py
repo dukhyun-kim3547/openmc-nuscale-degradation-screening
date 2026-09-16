@@ -50,7 +50,8 @@ CMAP = plt.get_cmap("YlGnBu")
 NORM = plt.Normalize(0, 1)
 INK, MUTED = "#1a1a1a", "#6b6b6b"
 
-SIGMA_R = 9.00          # batch-statistics standard deviation [pcm], reactivity units (M11)
+SIGMA_R = 9.00          # differencing standard deviation, sqrt(2)*sigma [pcm], reactivity units (M11)
+                        # -- NOT the single-calculation batch-statistics sigma, which is 12.61 pcm in k
 # The 42-point coefficient and its uncertainty are computed directly here,
 # using the same max(OLS, propagated) convention as checks/fit_coefficient.py
 # (the independent numerical check of this same value). Not hardcoded --
